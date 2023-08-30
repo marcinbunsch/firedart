@@ -14,7 +14,9 @@ class TokenProvider {
 
   final StreamController<bool> _signInStateStreamController;
 
-  TokenProvider(this.client, this._tokenStore)
+  final bool useEmulator;
+
+  TokenProvider(this.client, this._tokenStore, {this.useEmulator = false})
       : _signInStateStreamController = StreamController<bool>();
 
   String? get userId => _tokenStore.userId;
@@ -53,10 +55,16 @@ class TokenProvider {
 
   Future _refresh() async {
     var response = await client.post(
-      Uri.parse('https://securetoken.googleapis.com/v1/token'),
-      body: {
+      useEmulator
+          ? Uri.parse(
+              'http://localhost:9099/securetoken.googleapis.com/v1/token')
+          : Uri.parse('https://securetoken.googleapis.com/v1/token'),
+      body: json.encode({
         'grant_type': 'refresh_token',
         'refresh_token': _tokenStore.refreshToken,
+      }),
+      headers: {
+        'content-type': 'application/json',
       },
     );
 

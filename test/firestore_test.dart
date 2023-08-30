@@ -59,7 +59,7 @@ Future main() async {
       'See the docs: https://cloud.google.com/docs/authentication/application-default-credentials#GAC',
     );
 
-    final auth = ApplicationDefaultAuthenticator(useEmulator: false);
+    final auth = ApplicationDefaultAuthenticator(useFirestoreEmulator: false);
     var firestore = Firestore(projectId, authenticator: auth.authenticate);
 
     runTests(firestore);

@@ -5,11 +5,13 @@ import 'package:firedart/auth/token_provider.dart';
 
 class UserGateway {
   final UserClient _client;
+  final bool useEmulator;
 
-  UserGateway(KeyClient client, TokenProvider tokenProvider)
-      : _client = UserClient(client, tokenProvider);
+  UserGateway(KeyClient client, TokenProvider tokenProvider, {this.useEmulator = false})
+      : _client = UserClient(client, tokenProvider, useEmulator: useEmulator);
 
-  Future<void> requestEmailVerification({String? langCode}) => _post(
+  Future<void> requestEmailVerification({String? langCode}) =>
+      _post(
         'sendOobCode',
         {'requestType': 'VERIFY_EMAIL'},
         headers: {if (langCode != null) 'X-Firebase-Locale': langCode},
@@ -38,15 +40,17 @@ class UserGateway {
     await _post('delete', {});
   }
 
-  Future<Map<String, dynamic>> _post<T>(String method, Map<String, String> body,
+  Future<Map<String, dynamic>> _post<T>(String method,
+      Map<String, dynamic> body,
       {Map<String, String>? headers}) async {
-    var requestUrl =
-        'https://identitytoolkit.googleapis.com/v1/accounts:$method';
+
+    final requestPath = 'identitytoolkit.googleapis.com/v1/accounts:$method';
+    final requestUrl = useEmulator ? 'http://localhost:9099/$requestPath' : 'https://$requestPath';
 
     var response = await _client.post(
       Uri.parse(requestUrl),
-      body: body,
-      headers: headers,
+      body: json.encode(body),
+      headers: {'content-type': 'application/json'},
     );
 
     return json.decode(response.body);
@@ -67,7 +71,8 @@ class User {
         email = map['email'],
         emailVerified = map['emailVerified'];
 
-  Map<String, dynamic> toMap() => {
+  Map<String, dynamic> toMap() =>
+      {
         'localId': id,
         'displayName': displayName,
         'photoUrl': photoUrl,

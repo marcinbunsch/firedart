@@ -28,7 +28,7 @@ class Firestore {
     final RequestAuthenticator? authenticator;
     if (useApplicationDefaultAuth) {
       authenticator = ApplicationDefaultAuthenticator(
-        useEmulator: emulator != null,
+        useFirestoreEmulator: emulator != null,
       ).authenticate;
     } else {
       FirebaseAuth? auth;
@@ -61,6 +61,7 @@ class Firestore {
 
   /* Instance interface */
   final FirestoreGateway _gateway;
+  final bool useEmulator;
 
   Firestore(
     String projectId, {
@@ -73,7 +74,8 @@ class Firestore {
           authenticator: authenticator,
           emulator: emulator,
         ),
-        assert(projectId.isNotEmpty);
+        assert(projectId.isNotEmpty),
+        useEmulator = emulator != null;
 
   Reference reference(String path) => Reference.create(_gateway, path);
 
@@ -82,7 +84,11 @@ class Firestore {
 
   DocumentReference document(String path) => DocumentReference(_gateway, path);
 
-  void close() {
-    _gateway.close();
+  Future<void> close() async {
+    await _gateway.close();
+  }
+
+  Future<void> reset() async {
+    await _gateway.resetData();
   }
 }

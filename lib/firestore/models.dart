@@ -15,11 +15,11 @@ abstract class Reference {
 
   String get id => path.substring(path.lastIndexOf('/') + 1);
 
-  String get fullPath => '${_gateway.database}/$path';
+  String get fullPath => '${_gateway.basePath}/$path';
 
   Reference(this._gateway, String path)
-      : path = _trimSlashes(path.startsWith(_gateway.database)
-            ? path.substring(_gateway.database.length + 1)
+      : path = _trimSlashes(path.startsWith(_gateway.basePath)
+            ? path.substring(_gateway.basePath.length + 1)
             : path);
 
   factory Reference.create(FirestoreGateway gateway, String path) {
