@@ -82,6 +82,9 @@ class Firestore {
   CollectionReference collection(String path) =>
       CollectionReference(_gateway, path);
 
+  QueryReference collectionGroup(String path) =>
+      QueryReference(_gateway, path, isCollectionGroup: true);
+
   DocumentReference document(String path) => DocumentReference(_gateway, path);
 
   Future<void> close() async {

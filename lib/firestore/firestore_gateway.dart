@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firedart/generated/google/firestore/v1/common.pb.dart';
 import 'package:firedart/generated/google/firestore/v1/document.pb.dart' as fs;
@@ -30,21 +31,21 @@ class _FirestoreGatewayStreamCache {
       {this.onDone, required this.userInfo, Function(Object e)? onError})
       : onError = onError ?? _handleErrorStub;
 
-  void setListenRequest(ListenRequest request, FirestoreClient client,
-      String database) {
+  void setListenRequest(
+      ListenRequest request, FirestoreClient client, String database) {
     // Close the request stream if this function is called for a second time;
     _listenRequestStreamController?.close();
 
     _documentMap = <String, Document>{};
     _listenRequestStreamController = StreamController<ListenRequest>();
     _listenResponseStreamController =
-    StreamController<ListenResponse>.broadcast(
-        onListen: _handleListenOnResponseStream,
-        onCancel: _handleCancelOnResponseStream);
+        StreamController<ListenResponse>.broadcast(
+            onListen: _handleListenOnResponseStream,
+            onCancel: _handleCancelOnResponseStream);
     _listenResponseStreamController.addStream(client
         .listen(_listenRequestStreamController!.stream,
-        options: CallOptions(
-            metadata: {'google-cloud-resource-prefix': database}))
+            options: CallOptions(
+                metadata: {'google-cloud-resource-prefix': database}))
         .handleError(onError));
     _listenRequestStreamController!.add(request);
   }
@@ -90,62 +91,93 @@ class FirestoreGateway {
 
   late ClientChannel _channel;
 
-  FirestoreGateway(String projectId, {
+  FirestoreGateway(
+    String projectId, {
     String? databaseId,
     RequestAuthenticator? authenticator,
     Emulator? emulator,
-  })
-      : _authenticator = authenticator,
+  })  : _authenticator = authenticator,
         basePath =
-        'projects/$projectId/databases/${databaseId ?? '(default)'}/documents',
+            'projects/$projectId/databases/${databaseId ?? '(default)'}/documents',
         database = 'projects/$projectId/databases/${databaseId ?? '(default)'}',
         _listenRequestStreamMap = <String, _FirestoreGatewayStreamCache>{} {
     _setupClient(emulator: emulator);
   }
 
-  Future<Page<Document>> getCollection(String path, int pageSize,
-      String nextPageToken) async {
+  Future<Page<Document>> getCollection(
+      String path, int pageSize, String nextPageToken) async {
     var request = ListDocumentsRequest()
       ..parent = path.substring(0, path.lastIndexOf('/'))
       ..collectionId = path.substring(path.lastIndexOf('/') + 1)
       ..pageSize = pageSize
       ..pageToken = nextPageToken;
     var response =
-    await _client.listDocuments(request).catchError(_handleError);
+        await _client.listDocuments(request).catchError(_handleError);
     var documents =
-    response.documents.map((rawDocument) => Document(this, rawDocument));
+        response.documents.map((rawDocument) => Document(this, rawDocument));
     return Page(documents, response.nextPageToken);
   }
 
   Stream<List<Document>> streamCollection(String path) {
-    if (_listenRequestStreamMap.containsKey(path)) {
-      return _mapCollectionStream(_listenRequestStreamMap[path]!);
-    }
+    // if (_listenRequestStreamMap.containsKey(path)) {
+    //   return _mapCollectionStream(_listenRequestStreamMap[path]!);
+    // }
 
     var selector = StructuredQuery_CollectionSelector()
       ..collectionId = path.substring(path.lastIndexOf('/') + 1);
-    var query = StructuredQuery()
-      ..from.add(selector);
+    var query = StructuredQuery()..from.add(selector);
     final queryTarget = Target_QueryTarget()
       ..parent = path.substring(0, path.lastIndexOf('/'))
       ..structuredQuery = query;
-    final target = Target()
-      ..query = queryTarget;
+    final target = Target()..query = queryTarget;
     final request = ListenRequest()
       ..database = database
       ..addTarget = target;
 
     final listenRequestStream = _FirestoreGatewayStreamCache(
         onDone: _handleDone, userInfo: path, onError: _handleError);
-    _listenRequestStreamMap[path] = listenRequestStream;
+    // _listenRequestStreamMap[path] = listenRequestStream;
 
     listenRequestStream.setListenRequest(request, _client, database);
 
     return _mapCollectionStream(listenRequestStream);
   }
 
-  Future<Document> createDocument(String path, String? documentId,
-      fs.Document document) async {
+  Stream<List<Document>> streamQuery(QueryReference queryReference) {
+    // TODO: this path should take all query parameters into account
+    final queryString = queryReference.structuredQuery.toDebugString();
+    final bytes = utf8.encode(queryString);
+    final base64Str = base64.encode(bytes);
+    final path = '${queryReference.fullPath}-${base64Str}';
+
+    // if (_listenRequestStreamMap.containsKey(path)) {
+    //   return _mapCollectionStream(_listenRequestStreamMap[path]!);
+    // }
+
+    var selector = StructuredQuery_CollectionSelector()
+      ..collectionId = path.substring(path.lastIndexOf('/') + 1);
+    var query = StructuredQuery()
+      ..from.add(selector)
+      ..where;
+    final queryTarget = Target_QueryTarget()
+      ..parent = path.substring(0, path.lastIndexOf('/'))
+      ..structuredQuery = queryReference.structuredQuery;
+    final target = Target()..query = queryTarget;
+    final request = ListenRequest()
+      ..database = queryReference.gateway.database
+      ..addTarget = target;
+
+    final listenRequestStream = _FirestoreGatewayStreamCache(
+        onDone: _handleDone, userInfo: path, onError: _handleError);
+    // _listenRequestStreamMap[path] = listenRequestStream;
+
+    listenRequestStream.setListenRequest(request, _client, database);
+
+    return _mapCollectionStream(listenRequestStream);
+  }
+
+  Future<Document> createDocument(
+      String path, String? documentId, fs.Document document) async {
     var split = path.split('/');
     var parent = split.sublist(0, split.length - 1).join('/');
     var collectionId = split.last;
@@ -157,24 +189,22 @@ class FirestoreGateway {
       ..document = document;
 
     var response =
-    await _client.createDocument(request).catchError(_handleError);
+        await _client.createDocument(request).catchError(_handleError);
     return Document(this, response);
   }
 
   Future<Document> getDocument(path) async {
     var rawDocument = await _client
-        .getDocument(GetDocumentRequest()
-      ..name = path)
+        .getDocument(GetDocumentRequest()..name = path)
         .catchError(_handleError);
     return Document(this, rawDocument);
   }
 
-  Future<void> updateDocument(String path, fs.Document document,
-      bool update) async {
+  Future<void> updateDocument(
+      String path, fs.Document document, bool update) async {
     document.name = path;
 
-    var request = UpdateDocumentRequest()
-      ..document = document;
+    var request = UpdateDocumentRequest()..document = document;
 
     if (update) {
       var mask = DocumentMask();
@@ -185,36 +215,35 @@ class FirestoreGateway {
     await _client.updateDocument(request).catchError(_handleError);
   }
 
-  Future<void> deleteDocument(String path) =>
-      _client
-          .deleteDocument(DeleteDocumentRequest()
-        ..name = path)
-          .catchError(_handleError);
+  Future<void> deleteDocument(String path) => _client
+      .deleteDocument(DeleteDocumentRequest()..name = path)
+      .catchError(_handleError);
 
   Stream<Document?> streamDocument(String path) {
-    if (_listenRequestStreamMap.containsKey(path)) {
-      return _mapDocumentStream(_listenRequestStreamMap[path]!);
-    }
+    // if (_listenRequestStreamMap.containsKey(path)) {
+    //   return _mapDocumentStream(_listenRequestStreamMap[path]!);
+    // }
 
-    final documentsTarget = Target_DocumentsTarget()
-      ..documents.add(path);
-    final target = Target()
-      ..documents = documentsTarget;
+    final documentsTarget = Target_DocumentsTarget()..documents.add(path);
+    final target = Target()..documents = documentsTarget;
     final request = ListenRequest()
       ..database = database
       ..addTarget = target;
 
     final listenRequestStream = _FirestoreGatewayStreamCache(
-        onDone: _handleDone, userInfo: path, onError: _handleError);
-    _listenRequestStreamMap[path] = listenRequestStream;
+      onDone: _handleDone,
+      userInfo: path,
+      onError: _handleError,
+    );
+    // _listenRequestStreamMap[path] = listenRequestStream;
 
     listenRequestStream.setListenRequest(request, _client, database);
 
     return _mapDocumentStream(listenRequestStream);
   }
 
-  Future<List<Document>> runQuery(StructuredQuery structuredQuery,
-      String fullPath) async {
+  Future<List<Document>> runQuery(
+      StructuredQuery structuredQuery, String fullPath) async {
     final runQuery = RunQueryRequest()
       ..structuredQuery = structuredQuery
       ..parent = fullPath.substring(0, fullPath.lastIndexOf('/'));
@@ -250,16 +279,16 @@ class FirestoreGateway {
     _listenRequestStreamMap.clear();
     _channel = emulator == null
         ? ClientChannel(
-      'firestore.googleapis.com',
-      options: ChannelOptions(),
-    )
+            'firestore.googleapis.com',
+            options: ChannelOptions(),
+          )
         : ClientChannel(
-      emulator.host,
-      port: emulator.port,
-      options: ChannelOptions(
-        credentials: ChannelCredentials.insecure(),
-      ),
-    );
+            emulator.host,
+            port: emulator.port,
+            options: ChannelOptions(
+              credentials: ChannelCredentials.insecure(),
+            ),
+          );
     _client = FirestoreClient(
       _channel,
       options: callOptions,
@@ -276,11 +305,9 @@ class FirestoreGateway {
           StatusCode.unauthenticated,
           StatusCode.dataLoss,
         ].contains(e.code)) {
-      print('Recoverable Firestore client error, resetting client');
-      print(e.message);
       _setupClient();
     }
-    print(e);
+    // print(e);
     throw e;
   }
 
@@ -291,13 +318,16 @@ class FirestoreGateway {
   // TODO(Fix this for not spamming when a bunch of documents already exist in the collection)
   Stream<List<Document>> _mapCollectionStream(
       _FirestoreGatewayStreamCache listenRequestStream) async* {
-    yield listenRequestStream.documentMap.values.toList();
+    // THIS WILL FIRE AN EMPTY ARRAY
+    // yield listenRequestStream.documentMap.values.toList();
 
     await for (final response in listenRequestStream.stream) {
       if (response.hasTargetChange()) {
         final targetChange = response.targetChange;
-        // if (targetChange.targetChangeType ==
-        //     TargetChange_TargetChangeType.CURRENT) {}
+        if (targetChange.targetChangeType ==
+            TargetChange_TargetChangeType.CURRENT) {
+          yield listenRequestStream.documentMap.values.toList();
+        }
 
         if (targetChange.targetChangeType ==
             TargetChange_TargetChangeType.RESET) {
@@ -316,7 +346,9 @@ class FirestoreGateway {
             .remove(response.documentDelete.document);
       }
 
-      yield listenRequestStream.documentMap.values.toList();
+      // this will fire every time there is a change in the collection
+      // we only want to fire on current state
+      // yield listenRequestStream.documentMap.values.toList();
     }
   }
 
@@ -324,12 +356,11 @@ class FirestoreGateway {
       _FirestoreGatewayStreamCache listenRequestStream) {
     return listenRequestStream.stream
         .where((response) =>
-    response.hasDocumentChange() ||
-        response.hasDocumentRemove() ||
-        response.hasDocumentDelete())
-        .map((response) =>
-    response.hasDocumentChange()
-        ? Document(this, response.documentChange.document)
-        : null);
+            response.hasDocumentChange() ||
+            response.hasDocumentRemove() ||
+            response.hasDocumentDelete())
+        .map((response) => response.hasDocumentChange()
+            ? Document(this, response.documentChange.document)
+            : null);
   }
 }

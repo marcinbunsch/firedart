@@ -16,7 +16,8 @@ class FirebaseAuth {
     if (initialized) {
       throw Exception('FirebaseAuth instance was already initialized');
     }
-    _instance = FirebaseAuth(apiKey, tokenStore, httpClient: httpClient, useEmulator: useEmulator);
+    _instance = FirebaseAuth(apiKey, tokenStore,
+        httpClient: httpClient, useEmulator: useEmulator);
     return _instance!;
   }
 
@@ -39,14 +40,19 @@ class FirebaseAuth {
   late AuthGateway _authGateway;
   late UserGateway _userGateway;
 
-  FirebaseAuth(this.apiKey, TokenStore tokenStore, {http.Client? httpClient, bool this.useEmulator = false})
+  FirebaseAuth(this.apiKey, TokenStore tokenStore,
+      {http.Client? httpClient, bool this.useEmulator = false})
       : assert(apiKey.isNotEmpty),
         httpClient = httpClient ?? http.Client() {
-    var keyClient = KeyClient(this.httpClient, apiKey, useEmulator: useEmulator);
-    tokenProvider = TokenProvider(keyClient, tokenStore, useEmulator: useEmulator);
+    var keyClient =
+        KeyClient(this.httpClient, apiKey, useEmulator: useEmulator);
+    tokenProvider =
+        TokenProvider(keyClient, tokenStore, useEmulator: useEmulator);
 
-    _authGateway = AuthGateway(keyClient, tokenProvider, useEmulator: useEmulator);
-    _userGateway = UserGateway(keyClient, tokenProvider, useEmulator: useEmulator);
+    _authGateway =
+        AuthGateway(keyClient, tokenProvider, useEmulator: useEmulator);
+    _userGateway =
+        UserGateway(keyClient, tokenProvider, useEmulator: useEmulator);
   }
 
   bool get isSignedIn => tokenProvider.isSignedIn;

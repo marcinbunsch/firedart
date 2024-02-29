@@ -9,9 +9,15 @@ import 'package:grpc/grpc.dart';
 import 'firestore_gateway.dart';
 import 'type_util.dart';
 
+abstract class WithAdvancedWhere {
+  QueryReference advancedWhere(FirestoreFilter filter);
+}
+
 abstract class Reference {
   final FirestoreGateway _gateway;
   final String path;
+
+  FirestoreGateway get gateway => _gateway;
 
   String get id => path.substring(path.lastIndexOf('/') + 1);
 
@@ -56,7 +62,7 @@ abstract class Reference {
   }
 }
 
-class CollectionReference extends Reference {
+class CollectionReference extends Reference implements WithAdvancedWhere {
   final FirestoreGateway gateway;
 
   /// Constructs a [CollectionReference] using [FirestoreGateway] and path.
@@ -66,6 +72,11 @@ class CollectionReference extends Reference {
     if (fullPath.split('/').length % 2 == 1) {
       throw Exception('Path is not a collection: $path');
     }
+  }
+
+  @override
+  QueryReference advancedWhere(FirestoreFilter filter) {
+    return QueryReference(gateway, path).advancedWhere(filter);
   }
 
   QueryReference where(
@@ -176,6 +187,12 @@ class Document {
 
   Document(this._gateway, this._rawDocument);
 
+  static Document fromPath(FirestoreGateway gateway, String path) {
+    return Document(gateway, fs.Document(name: path));
+  }
+
+  fs.Document get rawDocument => _rawDocument;
+
   String get id => path.substring(path.lastIndexOf('/') + 1);
 
   String get path =>
@@ -193,6 +210,10 @@ class Document {
   dynamic operator [](String key) {
     if (!_rawDocument.fields.containsKey(key)) return null;
     return TypeUtil.decode(_rawDocument.fields[key]!, _gateway);
+  }
+
+  dynamic set(String key, dynamic value) {
+    _rawDocument.fields[key] = TypeUtil.encode(value);
   }
 
   @override
@@ -251,12 +272,121 @@ class Page<T> extends ListBase<T> {
   }
 }
 
-class QueryReference extends Reference {
+class FirestoreFilter {
+  final StructuredQuery_Filter filter;
+
+  FirestoreFilter(this.filter);
+
+  @override
+  String toString() => filter.toDebugString();
+}
+
+class FirestoreFilterBuilder {
+  static FirestoreFilter or(List<FirestoreFilter> filters) {
+    var compositeFilter = StructuredQuery_CompositeFilter()
+      ..op = StructuredQuery_CompositeFilter_Operator.OR;
+    compositeFilter.filters.addAll(filters.map((f) => f.filter));
+    final finalFilter = StructuredQuery_Filter()
+      ..compositeFilter = compositeFilter;
+    return FirestoreFilter(finalFilter);
+  }
+
+  static FirestoreFilter and(List<FirestoreFilter> filters) {
+    var compositeFilter = StructuredQuery_CompositeFilter()
+      ..op = StructuredQuery_CompositeFilter_Operator.AND;
+    compositeFilter.filters.addAll(filters.map((f) => f.filter));
+    final finalFilter = StructuredQuery_Filter()
+      ..compositeFilter = compositeFilter;
+    return FirestoreFilter(finalFilter);
+  }
+
+  static FirestoreFilter isEqualTo(String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.EQUAL,
+    );
+  }
+
+  static FirestoreFilter isGreaterThan(String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.GREATER_THAN,
+    );
+  }
+
+  static FirestoreFilter isGreaterThanOrEqualTo(
+      String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.GREATER_THAN_OR_EQUAL,
+    );
+  }
+
+  static FirestoreFilter isNotEqualTo(String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.NOT_EQUAL,
+    );
+  }
+
+  static FirestoreFilter isLessThan(String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.LESS_THAN,
+    );
+  }
+
+  static FirestoreFilter arrayContains(String fieldPath, dynamic value) {
+    return operationFilter(
+      fieldPath,
+      value,
+      StructuredQuery_FieldFilter_Operator.ARRAY_CONTAINS,
+    );
+  }
+
+  static FirestoreFilter operationFilter(
+    String fieldPath,
+    dynamic value,
+    StructuredQuery_FieldFilter_Operator operator,
+  ) {
+    var filter = StructuredQuery_FieldFilter();
+    filter.op = operator;
+    filter.value = TypeUtil.encode(value);
+
+    if (fieldPath == '__document_id__') {
+      fieldPath = '__name__';
+    }
+    final fieldReference = StructuredQuery_FieldReference()
+      ..fieldPath = fieldPath;
+    filter.field_1 = fieldReference;
+
+    // queryFilter.fieldFilter = filter;
+    final finalFilter = StructuredQuery_Filter()..fieldFilter = filter;
+
+    return FirestoreFilter(finalFilter);
+  }
+}
+
+class QueryReference extends Reference implements WithAdvancedWhere {
   final StructuredQuery _structuredQuery = StructuredQuery();
 
-  QueryReference(super.gateway, super.path) {
-    _structuredQuery.from
-        .add(StructuredQuery_CollectionSelector()..collectionId = id);
+  QueryReference(super.gateway, super.path, {bool? isCollectionGroup = false}) {
+    final selector = StructuredQuery_CollectionSelector()..collectionId = id;
+    if (isCollectionGroup == true) {
+      selector.allDescendants = true;
+    }
+    _structuredQuery.from.add(selector);
+  }
+
+  @override
+  QueryReference advancedWhere(FirestoreFilter filter) {
+    _structuredQuery.where = filter.filter;
+    return this;
   }
 
   QueryReference where(
@@ -272,6 +402,7 @@ class QueryReference extends Reference {
     bool isNull = false,
   }) {
     if (isEqualTo != null) {
+      // advancedWhere(FirestoreFilterBuilder.isEqualTo(fieldPath, isEqualTo));
       _addFilter(fieldPath, isEqualTo,
           operator: StructuredQuery_FieldFilter_Operator.EQUAL);
     }
@@ -350,7 +481,31 @@ class QueryReference extends Reference {
     } else {
       var filter = StructuredQuery_FieldFilter();
       filter.op = operator;
-      filter.value = TypeUtil.encode(value);
+      if (fieldPath == '__document_id__') {
+        fieldPath = '__name__';
+        if (value is String) {
+          final referencePath = [fullPath, value].join('/');
+          final referenceValue = fs.Value()..referenceValue = referencePath;
+          filter.value = referenceValue;
+        } else if (value is List<Object?>) {
+          final referenceValues = value.map((val) {
+            final referencePath = [fullPath, val].join('/');
+            final referenceValue = fs.Value()..referenceValue = referencePath;
+            return referenceValue;
+          }).toList();
+          var array = fs.ArrayValue();
+          array.values.addAll(referenceValues);
+          final referenceValue = fs.Value()..arrayValue = array;
+
+          filter.value = referenceValue;
+        } else {
+          throw Exception(
+            'Unsupported value type for document id: ${value.runtimeType}',
+          );
+        }
+      } else {
+        filter.value = TypeUtil.encode(value);
+      }
 
       final fieldReference = StructuredQuery_FieldReference()
         ..fieldPath = fieldPath;
@@ -372,4 +527,8 @@ class QueryReference extends Reference {
     _structuredQuery.where = StructuredQuery_Filter()
       ..compositeFilter = compositeFilter;
   }
+
+  Stream<List<Document>> get stream => _gateway.streamQuery(this);
+
+  StructuredQuery get structuredQuery => _structuredQuery;
 }
