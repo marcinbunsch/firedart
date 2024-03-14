@@ -276,7 +276,6 @@ class FirestoreGateway {
   }
 
   void _setupClient() {
-    print('Setting up client  ');
     final callOptions = _authenticator != null
         ? CallOptions(providers: [_authenticator!])
         : null;
